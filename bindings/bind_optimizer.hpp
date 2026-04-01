@@ -84,7 +84,7 @@ void bind_optimizer(py::module_& m, const std::string& class_name)
         .def_property("mask",
             [](const Problem& p) -> py::object {
                 if (!p.mask.has_value()) return py::none();
-                return py::cast(p.mask.value());
+                return py::cast(*p.mask);
             },
             [](Problem& p, py::object obj) {
                 if (obj.is_none()) p.mask = std::nullopt;
