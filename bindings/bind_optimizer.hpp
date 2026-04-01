@@ -96,7 +96,24 @@ void bind_optimizer(py::module_& m, const std::string& class_name)
     auto ctx_cls = py::class_<Context, std::shared_ptr<Context>>(m, ctx_name.c_str())
         .def_property_readonly("is_valid", &Context::isValid)
         .def_property_readonly("num_segments",
-            [](const Context& c) { return c.prepared.num_segments; });
+            [](const Context& c) { return c.prepared.num_segments; })
+        // Offset in x where boundary-derivative variables begin
+        .def_property_readonly("bc_offset",
+            [](const Context& c) {
+                return c.prepared.layout.boundary_derivatives_offset;
+            })
+        // Number of boundary-derivative variables in x
+        // (= total_dimension - bc_offset for VoidAuxiliaryStateMap)
+        .def_property_readonly("n_bc_vars",
+            [](const Context& c) {
+                return c.prepared.layout.total_dimension
+                       - c.prepared.layout.boundary_derivatives_offset;
+            })
+        // Total decision-variable dimension
+        .def_property_readonly("total_dim",
+            [](const Context& c) {
+                return c.prepared.layout.total_dimension;
+            });
 
     // ---- SplineOptimizer --------------------------------------------------
     auto opt_cls = py::class_<Opt>(m, class_name.c_str())

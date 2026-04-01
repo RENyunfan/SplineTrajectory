@@ -192,6 +192,187 @@ def optimize(optimizer, ctx, time_cost=None, integral_cost=None, *,
     )
 
 
+def optimize_closed_loop(
+    optimizer,
+    waypoints,
+    time_segments,
+    *,
+    closure_weight=1000.0,
+    rho_energy=1.0,
+    integral_num_steps=64,
+    optimize_times=True,
+    time_cost=None,
+    integral_cost=None,
+    max_iter=300,
+    ftol=1e-9,
+    gtol=1e-6,
+):
+    """Closed-loop trajectory optimization (e.g. drone racing).
+
+    Enforces C² continuity at the loop junction by:
+    - Setting waypoints[-1] = waypoints[0] (position closure).
+    - Freeing start/end boundary derivatives as decision variables.
+    - Adding a soft penalty  ``closure_weight * ||start_BC - end_BC||²``
+      so that velocity and acceleration match at the junction.
+
+    The penalty weight ``closure_weight`` should be large enough to drive
+    the BC mismatch close to zero (typically 100–10000).  After optimization,
+    the working spline passes through all waypoints with smooth, periodic
+    velocity and acceleration.
+
+    Parameters
+    ----------
+    optimizer : CubicOptimizerND / QuinticOptimizerND / SepticOptimizerND
+        Optimizer instance (``set_config`` is called internally).
+    waypoints : array-like, shape (N, DIM)
+        Waypoints the trajectory must pass through.  The last waypoint is
+        overwritten with the first to close the loop.
+    time_segments : list[float]
+        Initial duration for each segment (length N-1 for N waypoints).
+    closure_weight : float
+        Penalty weight for the BC closure constraint.
+    rho_energy : float
+        Weight for integrated energy (jerk/snap) regularization.
+    integral_num_steps : int
+        Trapezoidal integration steps per segment.
+    optimize_times : bool
+        If True (default) segment durations are also decision variables.
+    time_cost : callable or None
+        ``(times: ndarray) -> (float, ndarray)``  — custom time cost.
+        ``None`` uses a zero cost (only energy regularization).
+    integral_cost : callable or None
+        Integral cost callable — see ``optimize()`` for signature.
+    max_iter, ftol, gtol : optimization termination criteria.
+
+    Returns
+    -------
+    result : scipy.optimize.OptimizeResult
+    ctx    : OptimizationContext  (use with ``optimizer.get_working_spline(ctx)``)
+
+    Example
+    -------
+    >>> import numpy as np
+    >>> from spline_trajectory import QuinticOptimizer3D, optimize_closed_loop, Deriv
+    >>> gates = np.array([[0,0,1],[3,1,2],[5,4,1],[2,5,2]], dtype=float)
+    >>> time_segs = [1.0, 1.5, 1.2, 1.0]   # N-1 segments for N gates
+    >>> opt = QuinticOptimizer3D()
+    >>> result, ctx = optimize_closed_loop(opt, gates, time_segs)
+    >>> spline = opt.get_working_spline(ctx)
+    """
+    try:
+        from scipy.optimize import minimize
+    except ImportError as e:
+        raise ImportError(
+            "scipy is required for optimize_closed_loop(). "
+            "Install it with: pip install spline-trajectory[optimize]"
+        ) from e
+
+    wp = np.array(waypoints, dtype=float)
+    if wp.ndim != 2:
+        raise ValueError("waypoints must be 2-D array of shape (N, DIM)")
+    n_wp, dim = wp.shape
+    n_seg = len(time_segments)
+    if n_seg != n_wp - 1:
+        raise ValueError(
+            f"len(time_segments)={n_seg} must equal len(waypoints)-1={n_wp-1}"
+        )
+
+    # Close the position loop
+    wp[-1] = wp[0]
+
+    # Build zero BC (actual values will be optimized)
+    _bc_classes = {
+        1: BoundaryConditions1D, 2: BoundaryConditions2D,
+        3: BoundaryConditions3D, 4: BoundaryConditions4D,
+        5: BoundaryConditions5D, 6: BoundaryConditions6D,
+    }
+    if dim not in _bc_classes:
+        raise ValueError(f"DIM={dim} is not supported (must be 1–6)")
+    bc = _bc_classes[dim]()
+
+    optimizer.set_config(rho_energy=rho_energy, integral_num_steps=integral_num_steps)
+
+    # Probe which BC slots this spline order supports by trying progressively
+    # fewer derivative orders (jerk → acc → vel only).
+    # ORDER≥7 (Septic)  : v + a + j
+    # ORDER≥5 (Quintic) : v + a
+    # ORDER=3 (Cubic)   : v only
+    def _make_mask(enable_a, enable_j):
+        m = OptimizationMask()
+        m.waypoints = [0] * n_wp
+        m.time = [1 if optimize_times else 0] * n_seg
+        m.start.v = True
+        m.start.a = enable_a
+        m.start.j = enable_j
+        m.end.v = True
+        m.end.a = enable_a
+        m.end.j = enable_j
+        return m
+
+    ctx = None
+    for try_a, try_j in [(True, True), (True, False), (False, False)]:
+        try:
+            ctx = optimizer.prepare_context(
+                time_segments=list(time_segments),
+                waypoints=wp,
+                bc=bc,
+                mask=_make_mask(try_a, try_j),
+            )
+            break
+        except RuntimeError:
+            continue
+    if ctx is None:
+        raise RuntimeError(
+            "optimize_closed_loop: could not prepare a valid context. "
+            "Check waypoints, time_segments, and optimizer type."
+        )
+
+    # Layout: bc_offset tells us where in x the BC variables live.
+    # Order (from forEachOptimizedBoundaryDerivativeSlot):
+    #   [start_v (dim), start_a (dim), start_j (dim),   <- start blocks
+    #    end_v   (dim), end_a   (dim), end_j   (dim)]   <- end blocks
+    # (only slots actually enabled for this spline order appear)
+    bc_offset = ctx.bc_offset
+    n_bc_total = ctx.n_bc_vars          # total BC vars in x
+    n_bc_per_end = n_bc_total // 2      # symmetric: same slots for start and end
+
+    if time_cost is None:
+        time_cost = _zero_time_cost
+
+    if integral_cost is None:
+        def integral_cost(t, tg, seg, step, p, v, a, j, s):
+            z = np.zeros_like(p)
+            return 0.0, z, z, z, z, z, 0.0
+
+    def _objective(x):
+        traj_cost, grad = optimizer.evaluate(ctx, x, time_cost, integral_cost)
+        grad = np.asarray(grad, dtype=np.float64)
+
+        # Closure penalty: ||start_BC - end_BC||²
+        if n_bc_per_end > 0:
+            s_bc = x[bc_offset : bc_offset + n_bc_per_end]
+            e_bc = x[bc_offset + n_bc_per_end : bc_offset + 2 * n_bc_per_end]
+            diff = s_bc - e_bc
+            penalty = closure_weight * float(np.dot(diff, diff))
+            grad[bc_offset : bc_offset + n_bc_per_end] += 2.0 * closure_weight * diff
+            grad[bc_offset + n_bc_per_end : bc_offset + 2 * n_bc_per_end] -= (
+                2.0 * closure_weight * diff
+            )
+        else:
+            penalty = 0.0
+
+        return float(traj_cost) + penalty, grad
+
+    x0 = optimizer.generate_initial_guess(ctx)
+    result = minimize(
+        _objective, x0,
+        method="L-BFGS-B",
+        jac=True,
+        options={"maxiter": max_iter, "ftol": ftol, "gtol": gtol},
+    )
+    return result, ctx
+
+
 __all__ = [
     # Enum
     "Deriv",
@@ -221,6 +402,7 @@ __all__ = [
     # Helpers
     "OptimizationMask",
     "BoundaryDerivativeMask",
-    # Convenience function
+    # Convenience functions
     "optimize",
+    "optimize_closed_loop",
 ]
