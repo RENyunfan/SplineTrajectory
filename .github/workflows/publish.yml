@@ -1,0 +1,85 @@
+name: Build and Publish to PyPI
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build_wheels:
+    name: Build wheels on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-13, macos-14, windows-2022]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Set up QEMU for Linux aarch64 cross-compilation
+      - name: Set up QEMU
+        if: runner.os == 'Linux'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - uses: pypa/cibuildwheel@v2.19
+        env:
+          CIBW_BUILD: "cp39-* cp310-* cp311-* cp312-*"
+          CIBW_ARCHS_LINUX: "x86_64 aarch64"
+          CIBW_ARCHS_MACOS: "x86_64 arm64"
+          CIBW_ARCHS_WINDOWS: "AMD64"
+          # Install Eigen in the build environment
+          CIBW_BEFORE_ALL_LINUX: >
+            (yum install -y eigen3-devel 2>/dev/null ||
+             apt-get install -y libeigen3-dev 2>/dev/null) || true
+          CIBW_BEFORE_ALL_MACOS: brew install eigen
+          # Windows: Eigen will be fetched via FetchContent in CMakeLists.txt
+          CIBW_BUILD_VERBOSITY: 1
+          CIBW_TEST_REQUIRES: "pytest scipy"
+          CIBW_TEST_COMMAND: pytest {project}/tests/test_splines.py -v
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}
+          path: wheelhouse/*.whl
+
+  build_sdist:
+    name: Build source distribution
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build sdist
+        run: |
+          pip install build
+          python -m build --sdist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+
+  publish:
+    name: Publish to PyPI
+    needs: [build_wheels, build_sdist]
+    runs-on: ubuntu-22.04
+    environment:
+      name: pypi
+      url: https://pypi.org/p/spline-trajectory
+    permissions:
+      id-token: write  # OIDC trusted publishing
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

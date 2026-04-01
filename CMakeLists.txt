@@ -1,10 +1,79 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.18)
 project(SplineTrajectoryExamples)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# ============================================================
+# Python extension build (triggered by scikit-build-core or
+# -DSPLINE_BUILD_PYTHON=ON)
+# ============================================================
+if(SKBUILD OR SPLINE_BUILD_PYTHON)
+    find_package(Python REQUIRED COMPONENTS Interpreter Development.Module NumPy)
+
+    # Try system Eigen3 first; fall back to FetchContent
+    find_package(Eigen3 QUIET)
+    if(NOT TARGET Eigen3::Eigen)
+        find_package(PkgConfig QUIET)
+        if(PkgConfig_FOUND)
+            pkg_check_modules(EIGEN3 eigen3)
+        endif()
+        if(NOT EIGEN3_FOUND AND NOT TARGET Eigen3::Eigen)
+            include(FetchContent)
+            FetchContent_Declare(eigen
+                GIT_REPOSITORY https://gitlab.com/libeigen/eigen.git
+                GIT_TAG 3.4.0
+                GIT_SHALLOW TRUE
+            )
+            FetchContent_MakeAvailable(eigen)
+        endif()
+    endif()
+
+    # pybind11 via FetchContent
+    include(FetchContent)
+    FetchContent_Declare(pybind11
+        GIT_REPOSITORY https://github.com/pybind/pybind11.git
+        GIT_TAG v2.13.1
+        GIT_SHALLOW TRUE
+    )
+    FetchContent_MakeAvailable(pybind11)
+
+    python_add_library(_spline_trajectory MODULE
+        bindings/module.cpp
+        bindings/bind_splines_cubic.cpp
+        bindings/bind_splines_quintic.cpp
+        bindings/bind_splines_septic.cpp
+        bindings/bind_optimizer_cubic.cpp
+        bindings/bind_optimizer_quintic.cpp
+        bindings/bind_optimizer_septic.cpp
+    )
+
+    target_include_directories(_spline_trajectory PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/large_scale_traj_optimizer
+        ${CMAKE_CURRENT_SOURCE_DIR}/bindings
+    )
+
+    target_link_libraries(_spline_trajectory PRIVATE
+        pybind11::headers
+        Eigen3::Eigen
+        Python::NumPy
+    )
+
+    target_compile_options(_spline_trajectory PRIVATE
+        $<$<CONFIG:Release>:-O3 -ffast-math -DNDEBUG>
+        $<$<CONFIG:Debug>:-g -O0>
+    )
+
+    install(TARGETS _spline_trajectory DESTINATION spline_trajectory)
+    return()
+endif()
+
+# ============================================================
+# C++ tests / examples build (original)
+# ============================================================
 
 # Find Eigen3
 find_package(Eigen3 REQUIRED)
