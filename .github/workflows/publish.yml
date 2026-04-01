@@ -30,12 +30,14 @@ jobs:
           CIBW_ARCHS_LINUX: "x86_64 aarch64"
           CIBW_ARCHS_MACOS: "x86_64 arm64"
           CIBW_ARCHS_WINDOWS: "AMD64"
-          # Install Eigen in the build environment
+          # Install Eigen in the outer build environment (before any wheel build)
           CIBW_BEFORE_ALL_LINUX: >
             (yum install -y eigen3-devel 2>/dev/null ||
              apt-get install -y libeigen3-dev 2>/dev/null) || true
           CIBW_BEFORE_ALL_MACOS: brew install eigen
           # Windows: Eigen will be fetched via FetchContent in CMakeLists.txt
+          # Install numpy into the build venv before CMake runs (needed to locate headers)
+          CIBW_BEFORE_BUILD: pip install numpy
           CIBW_BUILD_VERBOSITY: 1
           CIBW_TEST_REQUIRES: "pytest scipy"
           CIBW_TEST_COMMAND: pytest {project}/tests/test_splines.py -v

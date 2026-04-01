@@ -9,6 +9,7 @@
     右侧 4 列：pos / vel / acc / jerk 随时间曲线（上=优化前，下=优化后）
 """
 
+import os
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
@@ -21,6 +22,9 @@ from spline_trajectory import (
     Deriv,
     optimize,
 )
+
+_IMAGES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../docs/images")
+os.makedirs(_IMAGES_DIR, exist_ok=True)
 
 # ── 1. 随机 waypoints ────────────────────────────────────────────────────────
 rng = np.random.default_rng(42)
@@ -157,6 +161,6 @@ for col_idx, label in enumerate(LABELS):
         ax.grid(True, lw=0.4, alpha=0.7)
         ax.tick_params(labelsize=7)
 
-plt.savefig("trajectory_optimization.png", dpi=150, bbox_inches="tight")
-print("\nPlot saved → trajectory_optimization.png")
+plt.savefig(os.path.join(_IMAGES_DIR, "trajectory_optimization.png"), dpi=150, bbox_inches="tight")
+print("\nPlot saved → docs/images/trajectory_optimization.png")
 plt.show()

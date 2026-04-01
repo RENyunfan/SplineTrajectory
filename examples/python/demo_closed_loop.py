@@ -12,6 +12,7 @@ Drone Racing — Closed-Loop Trajectory Optimization Demo
         红实线 = 优化后（闭合，BC 连续）
 """
 
+import os
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
@@ -24,6 +25,9 @@ from spline_trajectory import (
     Deriv,
     optimize_closed_loop,
 )
+
+_IMAGES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../docs/images")
+os.makedirs(_IMAGES_DIR, exist_ok=True)
 
 # ── 1. 随机 gate 位置 ─────────────────────────────────────────────────────────
 rng = np.random.default_rng(7)
@@ -187,6 +191,6 @@ for col_idx, label in enumerate(LABELS):
         ax.grid(True, lw=0.4, alpha=0.7)
         ax.tick_params(labelsize=7)
 
-plt.savefig("drone_racing_closed_loop.png", dpi=150, bbox_inches="tight")
-print("\nPlot saved → drone_racing_closed_loop.png")
+plt.savefig(os.path.join(_IMAGES_DIR, "drone_racing_closed_loop.png"), dpi=150, bbox_inches="tight")
+print("\nPlot saved → docs/images/drone_racing_closed_loop.png")
 plt.show()

@@ -11,7 +11,25 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # -DSPLINE_BUILD_PYTHON=ON)
 # ============================================================
 if(SKBUILD OR SPLINE_BUILD_PYTHON)
-    find_package(Python REQUIRED COMPONENTS Interpreter Development.Module NumPy)
+    # Find Python interpreter + module headers (no Python_LIBRARIES needed for extensions)
+    find_package(Python REQUIRED COMPONENTS Interpreter Development.Module)
+
+    # Find NumPy include dirs — try CMake component first, fall back to Python script
+    find_package(Python OPTIONAL_COMPONENTS NumPy QUIET)
+    if(NOT Python_NumPy_FOUND OR NOT Python_NumPy_INCLUDE_DIRS)
+        execute_process(
+            COMMAND "${Python_EXECUTABLE}" -c
+                "import numpy; print(numpy.get_include())"
+            OUTPUT_VARIABLE Python_NumPy_INCLUDE_DIRS
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            RESULT_VARIABLE _numpy_result
+        )
+        if(NOT _numpy_result EQUAL 0 OR NOT Python_NumPy_INCLUDE_DIRS)
+            message(FATAL_ERROR
+                "NumPy not found. Install it with: pip install numpy")
+        endif()
+        message(STATUS "NumPy include dirs (fallback): ${Python_NumPy_INCLUDE_DIRS}")
+    endif()
 
     # Try system Eigen3 first; fall back to FetchContent
     find_package(Eigen3 QUIET)
@@ -54,12 +72,12 @@ if(SKBUILD OR SPLINE_BUILD_PYTHON)
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/include/large_scale_traj_optimizer
         ${CMAKE_CURRENT_SOURCE_DIR}/bindings
+        ${Python_NumPy_INCLUDE_DIRS}
     )
 
     target_link_libraries(_spline_trajectory PRIVATE
         pybind11::headers
         Eigen3::Eigen
-        Python::NumPy
     )
 
     target_compile_options(_spline_trajectory PRIVATE
@@ -96,51 +114,45 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # Performance test executables
-add_executable(test_cubic_spline_vs_minco_nd test_cubic_spline_vs_minco_nd.cpp)
+add_executable(test_cubic_spline_vs_minco_nd examples/cpp/test_cubic_spline_vs_minco_nd.cpp)
 target_link_libraries(test_cubic_spline_vs_minco_nd Eigen3::Eigen)
 
-add_executable(test_quintic_spline_vs_minco_nd test_quintic_spline_vs_minco_nd.cpp)
+add_executable(test_quintic_spline_vs_minco_nd examples/cpp/test_quintic_spline_vs_minco_nd.cpp)
 target_link_libraries(test_quintic_spline_vs_minco_nd Eigen3::Eigen)
 
-add_executable(test_septic_spline_vs_minco_nd test_septic_spline_vs_minco_nd.cpp)
+add_executable(test_septic_spline_vs_minco_nd examples/cpp/test_septic_spline_vs_minco_nd.cpp)
 target_link_libraries(test_septic_spline_vs_minco_nd Eigen3::Eigen)
 
-# Add new min_jerk comparison test
-add_executable(test_with_min_jerk_3d test_with_min_jerk_3d.cpp)
+add_executable(test_with_min_jerk_3d examples/cpp/test_with_min_jerk_3d.cpp)
 target_link_libraries(test_with_min_jerk_3d Eigen3::Eigen)
 
-# Add new min_snap comparison test
-add_executable(test_with_min_snap_3d test_with_min_snap_3d.cpp)
+add_executable(test_with_min_snap_3d examples/cpp/test_with_min_snap_3d.cpp)
 target_link_libraries(test_with_min_snap_3d Eigen3::Eigen)
 
-# Add gradient test
-add_executable(test_Grad test_Grad.cpp)
+add_executable(test_Grad examples/cpp/test_Grad.cpp)
 target_link_libraries(test_Grad Eigen3::Eigen)
 
-# Example executables
-add_executable(basic_cubic_spline examples/basic_cubic_spline.cpp)
-target_link_libraries(basic_cubic_spline Eigen3::Eigen)
-
-add_executable(quintic_spline_comparison examples/quintic_spline_comparison.cpp)
-target_link_libraries(quintic_spline_comparison Eigen3::Eigen)
-
-add_executable(robot_trajectory_planning examples/robot_trajectory_planning.cpp)
-target_link_libraries(robot_trajectory_planning Eigen3::Eigen)
-
-# boundary condition grad test
-add_executable(test_bc_grad test_bc_grad.cpp)
+add_executable(test_bc_grad examples/cpp/test_bc_grad.cpp)
 target_link_libraries(test_bc_grad Eigen3::Eigen)
 
-# Cost gradient test
-add_executable(test_cost_grad test_cost_grad.cpp)
+add_executable(test_cost_grad examples/cpp/test_cost_grad.cpp)
 target_link_libraries(test_cost_grad Eigen3::Eigen)
 
-# PPolyND test
-add_executable(test_ppolyND test_ppolyND.cpp)
+add_executable(test_ppolyND examples/cpp/test_ppolyND.cpp)
 target_link_libraries(test_ppolyND Eigen3::Eigen)
 
-add_executable(test_spline_optimizer test_spline_optimizer.cpp)
+add_executable(test_spline_optimizer examples/cpp/test_spline_optimizer.cpp)
 target_link_libraries(test_spline_optimizer Eigen3::Eigen)
+
+# Example executables
+add_executable(basic_cubic_spline examples/cpp/basic_cubic_spline.cpp)
+target_link_libraries(basic_cubic_spline Eigen3::Eigen)
+
+add_executable(quintic_spline_comparison examples/cpp/quintic_spline_comparison.cpp)
+target_link_libraries(quintic_spline_comparison Eigen3::Eigen)
+
+add_executable(robot_trajectory_planning examples/cpp/robot_trajectory_planning.cpp)
+target_link_libraries(robot_trajectory_planning Eigen3::Eigen)
 
 # Compiler flags
 set(COMMON_COMPILE_FLAGS -Wall -Wextra)
