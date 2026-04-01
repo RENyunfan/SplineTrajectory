@@ -2500,7 +2500,7 @@ namespace SplineTrajectory
                 grad_times(i) += local_acc_gdT;
                 buffers.global_time_grad_buffer(i) += local_acc_explicit_time_grad;
 
-                grad_coeffs.template block(base_row, 0, SplineType::COEFF_NUM, DIM) += local_acc_gdC;
+                grad_coeffs.block(base_row, 0, SplineType::COEFF_NUM, DIM) += local_acc_gdC;
             });
 
             for(int i = 0; i < ctx.prepared.num_segments; ++i) {
